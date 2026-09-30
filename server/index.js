@@ -1,3 +1,4 @@
+import './load-env.js' // must stay first: loads .env before the modules below read it
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
