@@ -1,5 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { api } from './api'
+import { useAuth } from './auth'
 import type {
   ChatMessage,
   Group,
@@ -9,11 +11,15 @@ import type {
   SortMode,
   Task,
   TaskFilter,
-  Theme,
   View,
 } from './types'
 
+/** Guest scratch bucket. Signed-in users get `taskmaster.state.v1.<userId>`. */
 const STORAGE_KEY = 'taskmaster.state.v1'
+
+function storageKeyFor(userId: string | null): string {
+  return userId ? `${STORAGE_KEY}.${userId}` : STORAGE_KEY
+}
 
 export const SUGGESTED_PROMPTS: string[] = [
   'Can you help me with my first task?',
@@ -51,7 +57,6 @@ function seedState(): PersistedState {
     ],
     groups: [{ id: 'group-projects', name: 'Projects', collapsed: false }],
     chat: [],
-    theme: 'dark',
     selectedProjectId: null,
     sharingEnabled: false,
     premium: false,
@@ -59,9 +64,9 @@ function seedState(): PersistedState {
   }
 }
 
-function loadState(): PersistedState {
+function loadState(key: string): PersistedState {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(key)
     if (!raw) return seedState()
     const parsed = JSON.parse(raw) as Partial<PersistedState>
     return { ...seedState(), ...parsed }
@@ -117,7 +122,6 @@ interface AppContextValue {
   projects: Project[]
   groups: Group[]
   chat: ChatMessage[]
-  theme: Theme
   selectedProjectId: string | null
   sharingEnabled: boolean
   premium: boolean
@@ -134,7 +138,6 @@ interface AppContextValue {
   aiDrawerOpen: boolean
   aiFocusTick: number
   upgradeOpen: boolean
-  signedOut: boolean
   typing: boolean
   /* actions */
   setView: (v: View) => void
@@ -148,8 +151,6 @@ interface AppContextValue {
   setAiDrawerOpen: (b: boolean) => void
   openAi: () => void
   setUpgradeOpen: (b: boolean) => void
-  setSignedOut: (b: boolean) => void
-  setTheme: (t: Theme) => void
   setSortMode: (s: SortMode) => void
   addTask: (title: string, priority: Priority) => void
   toggleTask: (id: string) => void
@@ -175,7 +176,26 @@ interface AppContextValue {
 const AppContext = createContext<AppContextValue | null>(null)
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [persisted, setPersisted] = useState<PersistedState>(loadState)
+  const { user, token } = useAuth()
+  const userId = user?.id ?? null
+
+  /* The workspace lives in a bucket per identity: guests get a scratch bucket,
+     every signed-in account gets its own (mirrored to the API). The storage key
+     and the data always change together, so a write can never land in the
+     wrong account's bucket. */
+  const [snapshot, setSnapshot] = useState<{ key: string; state: PersistedState }>(() => {
+    const key = storageKeyFor(userId)
+    return { key, state: loadState(key) }
+  })
+  const persisted = snapshot.state
+
+  const setPersisted = (updater: PersistedState | ((prev: PersistedState) => PersistedState)) => {
+    setSnapshot((prev) => ({
+      ...prev,
+      state: typeof updater === 'function' ? updater(prev.state) : updater,
+    }))
+  }
+
   const [view, setView] = useState<View>('todo')
   const [filter, setFilter] = useState<TaskFilter>('all')
   const [search, setSearch] = useState('')
@@ -187,10 +207,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [aiDrawerOpen, setAiDrawerOpen] = useState(false)
   const [aiFocusTick, setAiFocusTick] = useState(0)
   const [upgradeOpen, setUpgradeOpen] = useState(false)
-  const [signedOut, setSignedOut] = useState(false)
   const [typing, setTyping] = useState(false)
 
-  const { tasks, projects, groups, chat, theme, selectedProjectId, sharingEnabled, premium, sortMode } = persisted
+  const { tasks, projects, groups, chat, selectedProjectId, sharingEnabled, premium, sortMode } = persisted
   const set = <K extends keyof PersistedState>(key: K, value: PersistedState[K]) => {
     setPersisted((prev) => ({ ...prev, [key]: value }))
   }
@@ -201,19 +220,68 @@ export function AppProvider({ children }: { children: ReactNode }) {
     tasksRef.current = tasks
   }, [tasks])
 
+  /* Swap buckets when the signed-in identity changes. */
+  useEffect(() => {
+    const key = storageKeyFor(userId)
+    setSnapshot((prev) => (prev.key === key ? prev : { key, state: loadState(key) }))
+  }, [userId])
+
   /* Persist to localStorage. */
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted))
+      localStorage.setItem(snapshot.key, JSON.stringify(snapshot.state))
     } catch {
       /* storage unavailable */
     }
-  }, [persisted])
+  }, [snapshot])
 
-  /* Apply theme to <html>. */
+  /* ---- server sync (signed-in users) ---- */
+  const [syncedUserId, setSyncedUserId] = useState<string | null>(null)
+  const saveTimer = useRef<number | null>(null)
+
+  /* Pull this account's workspace once after sign-in. */
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme)
-  }, [theme])
+    if (!token || !userId) {
+      setSyncedUserId(null)
+      return
+    }
+
+    let cancelled = false
+    api
+      .loadWorkspace(token)
+      .then((response) => {
+        if (cancelled) return
+        if (response.state) {
+          setPersisted((prev) => ({ ...prev, ...(response.state as Partial<PersistedState>) }))
+        }
+        setSyncedUserId(userId)
+      })
+      .catch(() => {
+        if (!cancelled) setSyncedUserId(userId)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [token, userId])
+
+  /* Push local edits back, debounced so typing a task title saves once. */
+  useEffect(() => {
+    if (!token || !userId || syncedUserId !== userId) return
+
+    if (saveTimer.current !== null) window.clearTimeout(saveTimer.current)
+    saveTimer.current = window.setTimeout(() => {
+      saveTimer.current = null
+      void api.saveWorkspace(token, persisted).catch(() => undefined)
+    }, 900)
+
+    return () => {
+      if (saveTimer.current !== null) {
+        window.clearTimeout(saveTimer.current)
+        saveTimer.current = null
+      }
+    }
+  }, [persisted, token, userId, syncedUserId])
 
   /* Chat typing timer cleanup. */
   const chatTimer = useRef<number | null>(null)
@@ -387,7 +455,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     projects,
     groups,
     chat,
-    theme,
     selectedProjectId,
     sharingEnabled,
     premium,
@@ -403,7 +470,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     aiDrawerOpen,
     aiFocusTick,
     upgradeOpen,
-    signedOut,
     typing,
     setView,
     setFilter,
@@ -416,8 +482,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setAiDrawerOpen,
     openAi,
     setUpgradeOpen,
-    setSignedOut,
-    setTheme: (t) => set('theme', t),
     setSortMode: (s) => set('sortMode', s),
     addTask,
     toggleTask,

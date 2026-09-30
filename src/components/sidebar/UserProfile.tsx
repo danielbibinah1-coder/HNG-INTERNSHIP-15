@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, Link2, LogOut, User } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { initialsOf, useAuth } from '../../auth'
 import { useApp } from '../../store'
 
 export default function UserProfile({ collapsed }: { collapsed: boolean }) {
-  const { setView, setSignedOut, setSidebarDrawerOpen } = useApp()
+  const { setView, setSidebarDrawerOpen } = useApp()
+  const { user, signOut } = useAuth()
+  const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -44,13 +48,15 @@ export default function UserProfile({ collapsed }: { collapsed: boolean }) {
           style={{ background: 'linear-gradient(135deg, var(--neon-2), var(--deep))' }}
           aria-hidden="true"
         >
-          PC
+          {user ? initialsOf(user.name) : 'G'}
         </span>
         {!collapsed && (
           <>
             <span className="min-w-0 flex-1 text-left">
-              <span className="block truncate text-[12.5px] font-medium text-ink">Pristia Candra</span>
-              <span className="block truncate text-[10.5px] text-ink-3">Workspace member #12</span>
+              <span className="block truncate text-[12.5px] font-medium text-ink">{user?.name ?? 'Guest'}</span>
+              <span className="block truncate text-[10.5px] text-ink-3">
+                {user?.email ?? 'Local workspace'}
+              </span>
             </span>
             <ChevronDown
               size={13}
@@ -85,7 +91,9 @@ export default function UserProfile({ collapsed }: { collapsed: boolean }) {
             className="dropdown-item dropdown-item--danger"
             onClick={() => {
               setOpen(false)
-              setSignedOut(true)
+              /* The guard sends a deliberate sign-out to the landing page. */
+              signOut()
+              navigate('/', { replace: true })
             }}
           >
             <LogOut size={13} />

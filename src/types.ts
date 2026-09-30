@@ -46,13 +46,12 @@ export interface ChatMessage {
 
 export type SortMode = 'manual' | 'priority'
 
-/** Full persisted application state (localStorage). */
+/** Full persisted application state (localStorage + server workspace blob). */
 export interface PersistedState {
   tasks: Task[]
   projects: Project[]
   groups: Group[]
   chat: ChatMessage[]
-  theme: Theme
   selectedProjectId: string | null
   sharingEnabled: boolean
   premium: boolean

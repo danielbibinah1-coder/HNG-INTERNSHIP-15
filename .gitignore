@@ -4,3 +4,20 @@ dist-ssr
 *.local
 .DS_Store
 npm-debug.log*
+
+# local env + secrets
+.env
+.env.*
+!.env.example
+server/.jwt-secret
+
+# sqlite database files
+server/*.sqlite
+server/*.sqlite-shm
+server/*.sqlite-wal
+
+# logs / tooling caches
+*.log
+.vite
+tsconfig.tsbuildinfo
+

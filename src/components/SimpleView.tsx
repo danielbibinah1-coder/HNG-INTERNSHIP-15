@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { Activity, ArrowLeft, BarChart3, Check, Link2, LogOut, UserPlus } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { initialsOf, useAuth } from '../auth'
 import { useApp } from '../store'
 import type { View } from '../types'
 
@@ -22,7 +24,7 @@ const FAQS: { question: string; answer: string }[] = [
   {
     question: 'Where is my data stored?',
     answer:
-      'TaskMaster stores tasks, lists, chat history and preferences in your browser localStorage. Nothing leaves your machine, and everything survives a refresh.',
+      'When you are signed in, your tasks, lists and chat history are saved to your TaskMaster account (SQLite behind the Express API) and cached in this browser, so they follow you between devices. Guests keep everything in this browser only.',
   },
   {
     question: 'What does Focus Mode do?',
@@ -37,7 +39,9 @@ const FAQS: { question: string; answer: string }[] = [
 ]
 
 export default function SimpleView() {
-  const { view, sharingEnabled, toggleSharing, setView, setSignedOut } = useApp()
+  const { view, sharingEnabled, toggleSharing, setView } = useApp()
+  const { user, signOut } = useAuth()
+  const navigate = useNavigate()
   const [copied, setCopied] = useState(false)
 
   if (view === 'todo') return null
@@ -177,17 +181,26 @@ export default function SimpleView() {
               style={{ background: 'linear-gradient(135deg, var(--neon-2), var(--deep))' }}
               aria-hidden="true"
             >
-              PC
+              {user ? initialsOf(user.name) : 'G'}
             </span>
-            <h2 className="mt-4 text-[15px] font-semibold text-ink">Pristia Candra</h2>
-            <p className="text-[12.5px] text-ink-2">pristia@odama.studio</p>
-            <p className="mt-1 text-[11.5px] text-ink-3">Workspace member #12 · Odama Studio</p>
+            <h2 className="mt-4 text-[15px] font-semibold text-ink">{user?.name ?? 'Guest'}</h2>
+            <p className="text-[12.5px] text-ink-2">{user?.email ?? 'Not signed in'}</p>
+            <p className="mt-1 text-[11.5px] text-ink-3">
+              {user ? 'TaskMaster account' : 'Guest workspace'} · Odama Studio
+            </p>
             <div className="mt-5 flex gap-2">
               <button type="button" className="btn-outline" onClick={() => setView('todo')}>
                 <ArrowLeft size={13} />
                 Back to To-do
               </button>
-              <button type="button" className="btn-soft" onClick={() => setSignedOut(true)}>
+              <button
+                type="button"
+                className="btn-soft"
+                onClick={() => {
+                  signOut()
+                  navigate('/', { replace: true })
+                }}
+              >
                 <LogOut size={13} />
                 Sign out
               </button>

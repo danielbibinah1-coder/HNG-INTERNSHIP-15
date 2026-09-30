@@ -1,5 +1,5 @@
 import { Moon, Sun } from 'lucide-react'
-import { useApp } from '../../store'
+import { useTheme } from '../../theme'
 import type { Theme } from '../../types'
 
 const options: { value: Theme; label: string; Icon: typeof Sun }[] = [
@@ -8,7 +8,7 @@ const options: { value: Theme; label: string; Icon: typeof Sun }[] = [
 ]
 
 export default function ThemeSwitcher({ collapsed }: { collapsed: boolean }) {
-  const { theme, setTheme } = useApp()
+  const { theme, setTheme, toggleTheme } = useTheme()
 
   if (collapsed) {
     const Current = theme === 'dark' ? Moon : Sun
@@ -17,7 +17,7 @@ export default function ThemeSwitcher({ collapsed }: { collapsed: boolean }) {
         type="button"
         className="icon-btn icon-btn--ring h-8 w-8 self-center"
         title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
-        onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        onClick={toggleTheme}
       >
         <Current size={14} />
       </button>
