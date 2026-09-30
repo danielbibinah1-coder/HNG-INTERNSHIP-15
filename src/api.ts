@@ -13,19 +13,21 @@ export interface ApiUser {
   createdAt: number
 }
 
-export interface AuthSession {
-  token: string
-  user: ApiUser
-}
-
 interface ApiErrorBody {
   code?: string
   message?: string
   fields?: Record<string, string>
 }
 
-interface AuthResponse extends AuthSession {
+/**
+ * Shape returned by the API's own /api/auth endpoints. Sign-in and sign-up now
+ * go through Supabase Auth (see src/services/auth-service.ts); these stay for
+ * API-level tooling and local experiments.
+ */
+interface AuthResponse {
   ok: boolean
+  token: string
+  user: ApiUser
 }
 
 export interface WorkspaceResponse {
@@ -50,44 +52,6 @@ export class ApiError extends Error {
 }
 
 const BASE_URL = String(import.meta.env.VITE_API_URL ?? '').replace(/\/+$/, '')
-const SESSION_KEY = 'taskmaster.auth.v1'
-
-function readFrom(pick: () => Storage): AuthSession | null {
-  try {
-    const raw = pick().getItem(SESSION_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as Partial<AuthSession> | null
-    if (!parsed || typeof parsed.token !== 'string' || !parsed.user) return null
-    return { token: parsed.token, user: parsed.user }
-  } catch {
-    return null
-  }
-}
-
-/** Reads the stored session, preferring a persistent ("remember me") one. */
-export function readSession(): AuthSession | null {
-  return readFrom(() => localStorage) ?? readFrom(() => sessionStorage)
-}
-
-/**
- * Stores the session. `remember: false` keeps it in sessionStorage, so closing
- * the browser signs the visitor out.
- */
-export function writeSession(session: AuthSession | null, remember = true): void {
-  try {
-    if (!session) {
-      localStorage.removeItem(SESSION_KEY)
-      sessionStorage.removeItem(SESSION_KEY)
-      return
-    }
-    const target = remember ? localStorage : sessionStorage
-    const other = remember ? sessionStorage : localStorage
-    other.removeItem(SESSION_KEY)
-    target.setItem(SESSION_KEY, JSON.stringify(session))
-  } catch {
-    /* storage unavailable — the in-memory session still works */
-  }
-}
 
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE'

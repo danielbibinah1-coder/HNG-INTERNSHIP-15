@@ -72,6 +72,29 @@ export function findUserById(id) {
   return toPublicUser(selectUserById.get(id))
 }
 
+/**
+ * Resolves the local user row for a Supabase identity.
+ *
+ * Supabase owns passwords now, so there is nothing to hash — we only need a
+ * stable row to hang the workspace off. If the same email already has a row
+ * (created through the API's own sign-up), that row is reused so its workspace
+ * is not orphaned.
+ */
+export function findOrCreateSupabaseUser({ id, email, name }) {
+  const existingById = findUserById(id)
+  if (existingById) return existingById
+
+  const existingByEmail = email ? findUserByEmail(email) : null
+  if (existingByEmail) return existingByEmail
+
+  return createUser({
+    id,
+    name: name?.trim() || (email ? email.split('@')[0] : 'Member'),
+    email: email || `${id}@supabase.local`,
+    passwordHash: '',
+  })
+}
+
 export function getWorkspace(userId) {
   const row = selectWorkspace.get(userId)
   if (!row) return { state: null, updatedAt: null }

@@ -5,15 +5,14 @@ import { AlertCircle, Loader2 } from 'lucide-react'
 import AuthLayout from '../components/auth/AuthLayout'
 import FormField from '../components/auth/FormField'
 import SocialButtons from '../components/auth/SocialButtons'
-import { ApiError } from '../api'
-import { useAuth } from '../auth'
+import { AuthServiceError, useAuth } from '../auth'
 
 interface SignInState {
   from?: string
 }
 
 export default function SignInPage() {
-  const { user, ready, signIn } = useAuth()
+  const { user, ready, signIn, sendPasswordReset, configured } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -22,16 +21,41 @@ export default function SignInPage() {
   const [remember, setRemember] = useState(true)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [formError, setFormError] = useState('')
+  const [notice, setNotice] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [resetting, setResetting] = useState(false)
 
   const from = (location.state as SignInState | null)?.from ?? '/app'
 
   /* Already signed in (or restored from storage) — go straight to the workspace. */
   if (ready && user) return <Navigate to={from} replace />
 
+  /** Supabase sends the reset link; the form stays as it is. */
+  const handlePasswordReset = async () => {
+    setFormError('')
+    setNotice('')
+
+    if (!email.trim()) {
+      setFieldErrors({ email: 'Enter your email address first.' })
+      return
+    }
+
+    setResetting(true)
+    try {
+      await sendPasswordReset(email)
+      setNotice('Check your inbox — Supabase emailed you a link to set a new password.')
+    } catch (error) {
+      if (error instanceof AuthServiceError) setFormError(error.message)
+      else setFormError('Could not send the reset email. Please try again.')
+    } finally {
+      setResetting(false)
+    }
+  }
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setFormError('')
+    setNotice('')
 
     const errors: Record<string, string> = {}
     if (!email.trim()) errors.email = 'Enter your email address.'
@@ -44,7 +68,7 @@ export default function SignInPage() {
       await signIn(email.trim(), password, remember)
       navigate(from, { replace: true })
     } catch (error) {
-      if (error instanceof ApiError) {
+      if (error instanceof AuthServiceError) {
         setFieldErrors(error.fields ?? {})
         setFormError(error.message)
       } else {
@@ -76,6 +100,15 @@ export default function SignInPage() {
           >
             <AlertCircle size={13} className="mt-0.5 flex-none" />
             {formError}
+          </p>
+        )}
+
+        {notice && (
+          <p
+            role="status"
+            className="anim-fade-in rounded-xl border border-line bg-panel-2 px-3.5 py-2.5 text-[12px] leading-relaxed text-ink-2"
+          >
+            {notice}
           </p>
         )}
 
@@ -112,15 +145,24 @@ export default function SignInPage() {
             />
             Keep me signed in
           </label>
-          <span
-            className="text-[11.5px] text-ink-3"
-            title="Password reset is not part of this prototype yet"
+          <button
+            type="button"
+            className="text-[11.5px] text-ink-3 transition-colors duration-150 hover:text-ink"
+            onClick={handlePasswordReset}
+            disabled={resetting}
           >
-            Forgot password?
-          </span>
+            {resetting ? 'Sending…' : 'Forgot password?'}
+          </button>
         </div>
 
-        <button type="submit" className="btn-neon w-full py-2.5" disabled={submitting}>
+        <button
+          type="submit"
+          className="btn-neon w-full py-2.5"
+          disabled={submitting || !configured}
+          title={
+            configured ? undefined : 'Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable sign-in'
+          }
+        >
           {submitting ? (
             <>
               <Loader2 size={14} className="animate-spin" />
@@ -134,8 +176,13 @@ export default function SignInPage() {
         <SocialButtons />
 
         <p className="text-[11px] leading-relaxed text-ink-3">
-          Accounts are stored by the TaskMaster API. If signing in fails, start it with{' '}
-          <code className="rounded bg-panel-3 px-1 py-0.5 text-[10.5px] text-ink-2">npm run dev:api</code>.
+          Accounts are managed by Supabase Auth. If signing in fails, check{' '}
+          <code className="rounded bg-panel-3 px-1 py-0.5 text-[10.5px] text-ink-2">VITE_SUPABASE_URL</code>{' '}
+          and{' '}
+          <code className="rounded bg-panel-3 px-1 py-0.5 text-[10.5px] text-ink-2">
+            VITE_SUPABASE_ANON_KEY
+          </code>{' '}
+          in your <code className="rounded bg-panel-3 px-1 py-0.5 text-[10.5px] text-ink-2">.env</code> file.
         </p>
       </form>
     </AuthLayout>

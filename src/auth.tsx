@@ -1,99 +1,124 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, readSession, writeSession } from './api'
-import type { ApiUser, AuthSession } from './api'
+import type { Session } from '@supabase/supabase-js'
+import type { ApiUser } from './api'
+import { isSupabaseConfigured } from './lib/supabase'
+import { authService, toApiUser } from './services/auth-service'
+import type { SignUpResult } from './services/auth-service'
 
-interface AuthContextValue {
+export { AuthServiceError } from './services/auth-service'
+export type { SignUpResult, AuthStatus } from './services/auth-service'
+
+export interface AuthContextValue {
+  /** The signed-in user, or null. */
   user: ApiUser | null
+  /** Supabase access token — the API accepts it as a bearer credential. */
   token: string | null
-  /** False until the stored session has been validated on boot. */
+  /** 'loading' while Supabase resolves the persisted session on boot. */
+  status: 'loading' | 'authenticated' | 'unauthenticated'
+  /** False until the persisted session has been resolved on boot. */
   ready: boolean
   /** True only after a deliberate sign-out, so the route guard can send the visitor home. */
   signedOut: boolean
+  /** False when VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are missing. */
+  configured: boolean
   signIn: (email: string, password: string, remember?: boolean) => Promise<ApiUser>
-  signUp: (name: string, email: string, password: string, remember?: boolean) => Promise<ApiUser>
+  signUp: (name: string, email: string, password: string, remember?: boolean) => Promise<SignUpResult>
+  signInWithGoogle: () => Promise<void>
+  sendPasswordReset: (email: string) => Promise<void>
   signOut: () => void
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
+/**
+ * Session state on top of Supabase Auth.
+ *
+ * The provider resolves the persisted session on boot (so a refresh keeps the
+ * visitor signed in) and then follows Supabase's auth events. Every screen that
+ * needs identity should call `useAuth()` rather than importing the service.
+ */
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<AuthSession | null>(readSession)
-  const [ready, setReady] = useState(false)
+  const [session, setSession] = useState<Session | null>(null)
+  const [ready, setReady] = useState(!isSupabaseConfigured)
   const [signedOut, setSignedOut] = useState(false)
 
-  /* Revalidate a stored token once on boot so stale sessions drop out cleanly. */
   useEffect(() => {
-    let cancelled = false
-    const stored = readSession()
-
-    if (!stored) {
+    if (!isSupabaseConfigured) {
       setReady(true)
       return
     }
 
-    api
-      .me(stored.token)
-      .then((response) => {
-        if (!cancelled) setSession({ token: stored.token, user: response.user })
-      })
-      .catch(() => {
-        if (!cancelled) {
-          writeSession(null)
-          setSession(null)
-        }
+    let active = true
+
+    authService
+      .getSession()
+      .then((current) => {
+        if (!active) return
+        setSession(current)
+        if (current) setSignedOut(false)
       })
       .finally(() => {
-        if (!cancelled) setReady(true)
+        if (active) setReady(true)
       })
 
+    const unsubscribe = authService.subscribe((next) => {
+      if (!active) return
+      setSession(next)
+      setReady(true)
+      if (!next) setSignedOut(true)
+    })
+
     return () => {
-      cancelled = true
+      active = false
+      unsubscribe()
     }
   }, [])
 
-  const adopt = useCallback((next: AuthSession, remember: boolean) => {
-    writeSession(next, remember)
-    setSession(next)
+  const user = useMemo(() => (session?.user ? toApiUser(session.user) : null), [session])
+
+  const signIn = useCallback(async (email: string, password: string, remember = true) => {
+    const signedInUser = await authService.signInWithEmail(email, password, remember)
     setSignedOut(false)
-    return next.user
+    return signedInUser
   }, [])
 
-  const signIn = useCallback(
-    async (email: string, password: string, remember = true) => {
-      const response = await api.login(email, password)
-      return adopt({ token: response.token, user: response.user }, remember)
-    },
-    [adopt],
-  )
+  const signUp = useCallback(async (name: string, email: string, password: string, remember = true) => {
+    const result = await authService.signUpWithEmail(name, email, password, remember)
+    if (result.user) setSignedOut(false)
+    return result
+  }, [])
 
-  const signUp = useCallback(
-    async (name: string, email: string, password: string, remember = true) => {
-      const response = await api.register(name, email, password)
-      return adopt({ token: response.token, user: response.user }, remember)
-    },
-    [adopt],
-  )
+  const signInWithGoogle = useCallback(async () => {
+    setSignedOut(false)
+    await authService.signInWithGoogle()
+  }, [])
+
+  const sendPasswordReset = useCallback(async (email: string) => {
+    await authService.sendPasswordReset(email)
+  }, [])
 
   const signOut = useCallback(() => {
-    const current = readSession()
-    if (current) void api.logout(current.token).catch(() => undefined)
-    writeSession(null)
+    void authService.signOut()
     setSession(null)
     setSignedOut(true)
   }, [])
 
   const value = useMemo<AuthContextValue>(
     () => ({
-      user: session?.user ?? null,
-      token: session?.token ?? null,
+      user,
+      token: session?.access_token ?? null,
+      status: ready ? (user ? 'authenticated' : 'unauthenticated') : 'loading',
       ready,
       signedOut,
+      configured: isSupabaseConfigured,
       signIn,
       signUp,
+      signInWithGoogle,
+      sendPasswordReset,
       signOut,
     }),
-    [session, ready, signedOut, signIn, signUp, signOut],
+    [user, session, ready, signedOut, signIn, signUp, signInWithGoogle, sendPasswordReset, signOut],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
@@ -112,3 +137,4 @@ export function initialsOf(name: string): string {
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
 }
+

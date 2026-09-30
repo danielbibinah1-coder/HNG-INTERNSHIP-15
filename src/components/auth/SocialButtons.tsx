@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { Info } from 'lucide-react'
+import { AuthServiceError, useAuth } from '../../auth'
 
 /* Brand marks kept inline so the bundle keeps its tiny dependency surface. */
 function GoogleMark() {
@@ -33,11 +35,28 @@ function GithubMark() {
 }
 
 /**
- * Social sign-in placeholders. They are intentionally disabled: wiring Google
- * or GitHub needs OAuth client credentials, and pretending otherwise would be
- * worse than saying so.
+ * Social sign-in. Google runs through Supabase OAuth (`signInWithOAuth`), which
+ * sends the visitor to Google and back — Supabase then establishes the session
+ * and this app picks it up through `onAuthStateChange`.
+ *
+ * GitHub stays disabled until that provider is enabled in the Supabase project.
  */
 export default function SocialButtons() {
+  const { signInWithGoogle, configured } = useAuth()
+  const [googleError, setGoogleError] = useState('')
+
+  const handleGoogle = async () => {
+    setGoogleError('')
+    try {
+      /* The browser navigates to Google; anything after this is best-effort. */
+      await signInWithGoogle()
+    } catch (error) {
+      setGoogleError(
+        error instanceof AuthServiceError ? error.message : 'Google sign-in is unavailable right now.',
+      )
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center gap-3">
@@ -50,8 +69,13 @@ export default function SocialButtons() {
         <button
           type="button"
           className="btn-outline justify-center gap-2 py-2.5 disabled:cursor-not-allowed disabled:opacity-55"
-          disabled
-          title="Google sign-in needs OAuth credentials"
+          onClick={handleGoogle}
+          disabled={!configured}
+          title={
+            configured
+              ? 'Continue with Google'
+              : 'Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable Google sign-in'
+          }
         >
           <GoogleMark />
           Google
@@ -60,16 +84,27 @@ export default function SocialButtons() {
           type="button"
           className="btn-outline justify-center gap-2 py-2.5 disabled:cursor-not-allowed disabled:opacity-55"
           disabled
-          title="GitHub sign-in needs OAuth credentials"
+          title="Enable the GitHub provider in Supabase to use this"
         >
           <GithubMark />
           GitHub
         </button>
       </div>
 
+      {googleError && (
+        <p
+          role="alert"
+          className="anim-fade-in mt-2.5 flex items-start gap-1.5 text-[11px] leading-relaxed text-neon-2"
+        >
+          <Info size={12} className="mt-0.5 flex-none" />
+          {googleError}
+        </p>
+      )}
+
       <p className="mt-2.5 flex items-start gap-1.5 text-[11px] leading-relaxed text-ink-3">
         <Info size={12} className="mt-0.5 flex-none" />
-        Social sign-in is not connected yet — email and password work today.
+        Google sign-in runs through Supabase OAuth — enable the Google provider in your project to use
+        it.
       </p>
     </div>
   )

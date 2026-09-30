@@ -3,7 +3,8 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import jwt from 'jsonwebtoken'
-import { findUserById } from './db.js'
+import { createClient } from '@supabase/supabase-js'
+import { findOrCreateSupabaseUser, findUserById } from './db.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -80,12 +81,52 @@ export function verifyToken(token) {
   }
 }
 
+/**
+ * Supabase-issued tokens.
+ *
+ * Identity now comes from Supabase Auth, so the API verifies the access token
+ * with Supabase itself (`auth.getUser`) instead of trusting a local signature.
+ * The anon key is enough for this — it only reads the caller.
+ */
+const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim()
+const SUPABASE_ANON_KEY = (process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim()
+
+const supabaseVerifier =
+  SUPABASE_URL && SUPABASE_ANON_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      })
+    : null
+
+export const isSupabaseEnabled = Boolean(supabaseVerifier)
+
+async function verifySupabaseToken(token) {
+  if (!supabaseVerifier) return null
+  try {
+    const { data, error } = await supabaseVerifier.auth.getUser(token)
+    if (error || !data?.user) return null
+    return data.user
+  } catch {
+    return null
+  }
+}
+
+function displayNameOf(supabaseUser) {
+  const metadata = supabaseUser.user_metadata ?? {}
+  const fullName = typeof metadata.full_name === 'string' ? metadata.full_name.trim() : ''
+  const givenName = typeof metadata.name === 'string' ? metadata.name.trim() : ''
+  return fullName || givenName || (supabaseUser.email ? supabaseUser.email.split('@')[0] : 'Member')
+}
+
 export function newUserId() {
   return randomUUID()
 }
 
-/** Express middleware — attaches req.user or replies 401. */
-export function requireAuth(req, res, next) {
+/**
+ * Express middleware — accepts either a Supabase access token (the path the app
+ * uses) or one of this server's own JWTs. Attaches req.user or replies 401.
+ */
+export async function requireAuth(req, res, next) {
   const header = req.get('authorization') || ''
   const [scheme, token] = header.split(' ')
 
@@ -96,18 +137,31 @@ export function requireAuth(req, res, next) {
     })
   }
 
-  const payload = verifyToken(token)
-  const user = payload ? findUserById(payload.sub) : null
-
-  if (!user) {
-    return res.status(401).json({
-      ok: false,
-      error: { code: 'session_expired', message: 'Your session expired — please sign in again.' },
-    })
+  /* Local JWT (API's own sign-up flow) — kept for local experiments. */
+  const localPayload = verifyToken(token)
+  if (localPayload) {
+    const localUser = findUserById(localPayload.sub)
+    if (localUser) {
+      req.user = localUser
+      return next()
+    }
   }
 
-  req.user = user
-  return next()
+  /* Supabase access token — the normal path now. */
+  const supabaseUser = await verifySupabaseToken(token)
+  if (supabaseUser) {
+    req.user = findOrCreateSupabaseUser({
+      id: supabaseUser.id,
+      email: supabaseUser.email,
+      name: displayNameOf(supabaseUser),
+    })
+    return next()
+  }
+
+  return res.status(401).json({
+    ok: false,
+    error: { code: 'session_expired', message: 'Your session expired — please sign in again.' },
+  })
 }
 
 /* ------------------------------------------------------------------ *

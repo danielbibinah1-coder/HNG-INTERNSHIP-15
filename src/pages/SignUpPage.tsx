@@ -5,8 +5,7 @@ import { AlertCircle, Loader2 } from 'lucide-react'
 import AuthLayout from '../components/auth/AuthLayout'
 import FormField from '../components/auth/FormField'
 import SocialButtons from '../components/auth/SocialButtons'
-import { ApiError } from '../api'
-import { useAuth } from '../auth'
+import { AuthServiceError, useAuth } from '../auth'
 
 /** Local strength read-out for feedback; the API enforces the real rules. */
 function strengthOf(password: string): { score: number; label: string } {
@@ -22,7 +21,7 @@ function strengthOf(password: string): { score: number; label: string } {
 }
 
 export default function SignUpPage() {
-  const { user, ready, signUp } = useAuth()
+  const { user, ready, signUp, configured } = useAuth()
   const navigate = useNavigate()
 
   const [name, setName] = useState('')
@@ -33,6 +32,7 @@ export default function SignUpPage() {
   const [remember, setRemember] = useState(true)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [formError, setFormError] = useState('')
+  const [notice, setNotice] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   const strength = strengthOf(password)
@@ -42,6 +42,7 @@ export default function SignUpPage() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setFormError('')
+    setNotice('')
 
     const errors: Record<string, string> = {}
     if (name.trim().length < 2) errors.name = 'Enter your name (at least 2 characters).'
@@ -58,10 +59,17 @@ export default function SignUpPage() {
 
     setSubmitting(true)
     try {
-      await signUp(name.trim(), email.trim(), password, remember)
+      const result = await signUp(name.trim(), email.trim(), password, remember)
+
+      /* Supabase only returns a session when email confirmation is switched off. */
+      if (result.needsEmailConfirmation) {
+        setNotice('Almost there — check your inbox and confirm your email, then sign in.')
+        return
+      }
+
       navigate('/app', { replace: true })
     } catch (error) {
-      if (error instanceof ApiError) {
+      if (error instanceof AuthServiceError) {
         setFieldErrors(error.fields ?? {})
         setFormError(error.message)
       } else {
@@ -75,7 +83,7 @@ export default function SignUpPage() {
   return (
     <AuthLayout
       title="Create your workspace"
-      subtitle="One account for your tasks, lists and AI history — synced by the TaskMaster API."
+      subtitle="One account for your tasks, lists and AI history — secured by Supabase Auth."
       footer={
         <>
           Already have an account?{' '}
@@ -93,6 +101,15 @@ export default function SignUpPage() {
           >
             <AlertCircle size={13} className="mt-0.5 flex-none" />
             {formError}
+          </p>
+        )}
+
+        {notice && (
+          <p
+            role="status"
+            className="anim-fade-in rounded-xl border border-line bg-panel-2 px-3.5 py-2.5 text-[12px] leading-relaxed text-ink-2"
+          >
+            {notice}
           </p>
         )}
 
@@ -181,7 +198,14 @@ export default function SignUpPage() {
           </label>
         </div>
 
-        <button type="submit" className="btn-neon w-full py-2.5" disabled={submitting}>
+        <button
+          type="submit"
+          className="btn-neon w-full py-2.5"
+          disabled={submitting || !configured}
+          title={
+            configured ? undefined : 'Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable sign-up'
+          }
+        >
           {submitting ? (
             <>
               <Loader2 size={14} className="animate-spin" />
