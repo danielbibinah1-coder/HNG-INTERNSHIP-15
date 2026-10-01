@@ -26,6 +26,8 @@ export interface AuthContextValue {
   signUp: (name: string, email: string, password: string, remember?: boolean) => Promise<SignUpResult>
   signInWithGoogle: () => Promise<void>
   sendPasswordReset: (email: string) => Promise<void>
+  /** Re-sends the "verify your email" message from the Check your email screen. */
+  resendVerificationEmail: (email: string) => Promise<void>
   signOut: () => void
 }
 
@@ -66,7 +68,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!active) return
       setSession(next)
       setReady(true)
-      if (!next) setSignedOut(true)
+      /* A null session here means "expired, revoked, or never had one" — not a
+         deliberate sign-out, so the flag is only cleared when a session arrives.
+         Setting it on boot would bounce signed-out visitors from /app to the
+         marketing page instead of the sign-in form. */
+      if (next) setSignedOut(false)
     })
 
     return () => {
@@ -98,6 +104,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await authService.sendPasswordReset(email)
   }, [])
 
+  const resendVerificationEmail = useCallback(async (email: string) => {
+    await authService.resendVerificationEmail(email)
+  }, [])
+
   const signOut = useCallback(() => {
     void authService.signOut()
     setSession(null)
@@ -116,9 +126,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signUp,
       signInWithGoogle,
       sendPasswordReset,
+      resendVerificationEmail,
       signOut,
     }),
-    [user, session, ready, signedOut, signIn, signUp, signInWithGoogle, sendPasswordReset, signOut],
+    [
+      user,
+      session,
+      ready,
+      signedOut,
+      signIn,
+      signUp,
+      signInWithGoogle,
+      sendPasswordReset,
+      resendVerificationEmail,
+      signOut,
+    ],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

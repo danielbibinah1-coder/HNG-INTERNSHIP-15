@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { AlertCircle, Loader2 } from 'lucide-react'
 import AuthLayout from '../components/auth/AuthLayout'
+import CheckEmailScreen from '../components/auth/CheckEmailScreen'
 import FormField from '../components/auth/FormField'
 import SocialButtons from '../components/auth/SocialButtons'
 import { AuthServiceError, useAuth } from '../auth'
@@ -21,7 +22,7 @@ function strengthOf(password: string): { score: number; label: string } {
 }
 
 export default function SignUpPage() {
-  const { user, ready, signUp, configured } = useAuth()
+  const { user, ready, signUp, configured, resendVerificationEmail } = useAuth()
   const navigate = useNavigate()
 
   const [name, setName] = useState('')
@@ -34,6 +35,8 @@ export default function SignUpPage() {
   const [formError, setFormError] = useState('')
   const [notice, setNotice] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  /** Set once Supabase accepts the sign-up and asks the user to verify their email. */
+  const [pendingVerification, setPendingVerification] = useState('')
 
   const strength = strengthOf(password)
 
@@ -63,7 +66,8 @@ export default function SignUpPage() {
 
       /* Supabase only returns a session when email confirmation is switched off. */
       if (result.needsEmailConfirmation) {
-        setNotice('Almost there — check your inbox and confirm your email, then sign in.')
+        /* Keep them on a confirmation screen instead of the sign-in form. */
+        setPendingVerification(email.trim())
         return
       }
 
@@ -78,6 +82,28 @@ export default function SignUpPage() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  if (pendingVerification) {
+    return (
+      <AuthLayout
+        title="Check your email"
+        subtitle="Your account is created — one quick confirmation left."
+        footer={
+          <>
+            Already verified?{' '}
+            <Link to="/signin" className="font-medium text-neon-2 hover:underline">
+              Sign in
+            </Link>
+          </>
+        }
+      >
+        <CheckEmailScreen
+          email={pendingVerification}
+          onResend={() => resendVerificationEmail(pendingVerification)}
+        />
+      </AuthLayout>
+    )
   }
 
   return (

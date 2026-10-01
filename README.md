@@ -16,8 +16,19 @@ Identity is handled by **Supabase Auth** (`@supabase/supabase-js`):
 | Sign In                    | `auth.signInWithPassword`                         |
 | Continue with Google       | `auth.signInWithOAuth({ provider: 'google' })`    |
 | Forgot Password            | `auth.resetPasswordForEmail`                      |
+| Resend verification        | `auth.resend({ type: 'signup' })`                 |
 | Sign Out                   | `auth.signOut`                                    |
 
+- **Any email address works.** Sign-up is plain email + password: Gmail, Outlook, Yahoo, iCloud, a
+  company domain, anything Supabase accepts. There is no provider allow-list, no Gmail-only rule and
+  no Google account requirement anywhere in the codebase. The Google button is one optional extra
+  way in, not a requirement.
+- **Email verification.** Turn it on once in Supabase → Authentication → Sign In / Providers →
+  Email → enable **Confirm email**. New accounts then get no session until they click the link, and
+  BetterTasks shows a "Check your email" screen (`src/components/auth/CheckEmailScreen.tsx`) with
+  the address they typed, a resend button and a route back to sign in. Signing in before verifying
+  returns "Confirm your email address before signing in." With confirmation off, sign-up logs the new
+  user straight in and the screen is skipped.
 - The session is persisted by Supabase (`persistSession: true`), so a refresh keeps the visitor signed in.
 - `src/lib/supabase.ts` owns the single shared client; `src/services/auth-service.ts` wraps every auth
   call and translates Supabase error codes into the messages the forms already know how to display;
@@ -25,6 +36,20 @@ Identity is handled by **Supabase Auth** (`@supabase/supabase-js`):
 - No credentials are hardcoded. Without `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` the app still
   boots and renders every screen, but the auth controls stay disabled rather than faking a session.
 - The API verifies the Supabase access token it receives (`auth.getUser`) before serving a workspace.
+
+### Per-user data isolation
+
+Everything a user creates stays theirs:
+
+- **Server side** — `requireAuth` resolves the token to a user id (`server/auth.js`) and every
+  workspace read/write is keyed by that id only (`getWorkspace(req.user.id)` / `saveWorkspace(req.user.id, …)`).
+  There is no endpoint parameter that can name another user, and a Supabase identity is matched by its
+  Supabase id and **never** by email, so a new account can never inherit an existing row's workspace.
+- **Browser side** — the local cache lives under `taskmaster.state.v1.<supabase-user-id>`, and
+  `src/store.tsx` swaps buckets whenever the signed-in identity changes, so signing in as someone else
+  on the same browser shows that person's workspace, not the previous one's.
+- `node scripts/isolation-check.mjs` proves this against a throwaway API + temp database: user B
+  cannot read, alter or overwrite user A's tasks, and forged/absent/tampered tokens are rejected.
 
 ## Routes
 

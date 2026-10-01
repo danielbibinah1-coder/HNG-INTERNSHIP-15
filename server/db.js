@@ -76,23 +76,42 @@ export function findUserById(id) {
  * Resolves the local user row for a Supabase identity.
  *
  * Supabase owns passwords now, so there is nothing to hash — we only need a
- * stable row to hang the workspace off. If the same email already has a row
- * (created through the API's own sign-up), that row is reused so its workspace
- * is not orphaned.
+ * stable row to hang the workspace off.
+ *
+ * Isolation rule: a Supabase identity is matched by its Supabase id and never by
+ * email. Emails are unique in Supabase, but the same address can still sit on a
+ * row created through the deprecated local sign-up endpoint. Reusing that row
+ * would hand the new account the previous owner's workspace, so on a collision
+ * the new identity gets its own row under a de-duplicated address.
  */
 export function findOrCreateSupabaseUser({ id, email, name }) {
   const existingById = findUserById(id)
   if (existingById) return existingById
 
-  const existingByEmail = email ? findUserByEmail(email) : null
-  if (existingByEmail) return existingByEmail
+  const displayName = name?.trim() || (email ? email.split('@')[0] : 'Member')
 
-  return createUser({
-    id,
-    name: name?.trim() || (email ? email.split('@')[0] : 'Member'),
-    email: email || `${id}@supabase.local`,
-    passwordHash: '',
-  })
+  try {
+    return createUser({
+      id,
+      name: displayName,
+      email: email || `${id}@supabase.local`,
+      passwordHash: '',
+    })
+  } catch (error) {
+    const message = String(error?.message ?? error)
+    if (!email || !/UNIQUE constraint failed: users\.email/i.test(message)) throw error
+
+    /* Legacy row owns that address — keep the two accounts strictly apart. */
+    return createUser({ id, name: displayName, email: dedupeEmail(email, id), passwordHash: '' })
+  }
+}
+
+/** `ada@acme.com` -> `ada+1a2b3c4d@acme.com` so it can coexist with the legacy row. */
+function dedupeEmail(email, id) {
+  const at = email.lastIndexOf('@')
+  const suffix = id.slice(0, 8)
+  if (at <= 0) return `${email}-${suffix}`
+  return `${email.slice(0, at)}+${suffix}${email.slice(at)}`
 }
 
 export function getWorkspace(userId) {

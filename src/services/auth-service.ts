@@ -167,6 +167,16 @@ export const authService = {
     }
   },
 
+  /** Sends the verification email again for an account awaiting confirmation. */
+  resendVerificationEmail: async (email: string): Promise<void> => {
+    try {
+      const { error } = await requireSupabase().auth.resend({ type: 'signup', email: email.trim() })
+      if (error) throw toServiceError(error, 'Could not send the verification email again.')
+    } catch (error) {
+      throw toServiceError(error, 'Could not send the verification email again.')
+    }
+  },
+
   /** Starts the Google OAuth flow — the browser navigates away from the app. */
   signInWithGoogle: async (): Promise<void> => {
     try {
